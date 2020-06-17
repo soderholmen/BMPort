@@ -92,8 +92,8 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>c:\opencv\build\include;$(IncludePath)</IncludePath>
-    <LibraryPath>c:\opencv\build\x64\vc15\bin;c:\opencv\build\x64\vc15\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\opencv\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\opencv\build\x64\vc15\bin;C:\opencv\build\x64\vc15\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -184,6 +184,9 @@
   </ItemGroup>
   <ItemGroup>
     <Midl Include="include\DeckLinkAPI.idl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

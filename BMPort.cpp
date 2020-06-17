@@ -1,6 +1,8 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include "opencv2/core/core_c.h"
 #include <iostream>
 #include <objbase.h>
 #include "DeckLinkAPI_h.h"
@@ -18,18 +20,91 @@ using namespace std;
 #define INT64_SIGNED LONGLONG
 
 // Video mode parameters
-const BMDDisplayMode      kDisplayMode = bmdMode4K2160p30;
+const BMDDisplayMode      kDisplayMode = bmdModeHD1080p30;
 const BMDVideoInputFlags  kInputFlag = bmdVideoInputFlagDefault;
-const BMDPixelFormat      kPixelFormat = bmdFormat10BitYUV;
+const BMDPixelFormat      kPixelFormat = bmdFormat8BitYUV;
 
 // Frame parameters
-const INT32_UNSIGNED kFrameDuration = 1001;
+const INT32_UNSIGNED kFrameDuration = 1000;
 const INT32_UNSIGNED kTimeScale = 30000;
 const INT32_UNSIGNED kSynchronizedCaptureGroup = 2;
 
 static const BMDTimeScale kMicroSecondsTimeScale = 1000000;
 
 class DeckLinkDevice;
+
+#define MAT_REFCOUNT(mat) \
+ (mat.u ? (mat.u->refcount) : 0)
+
+class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame
+{
+public:
+	cv::Mat mat;
+
+	CvMatDeckLinkVideoFrame(int row, int cols)
+		: mat(row, cols, CV_8UC4)
+	{}
+
+	//
+	// IDeckLinkVideoFrame
+	//
+
+	long STDMETHODCALLTYPE GetWidth()
+	{
+		return mat.rows;
+	}
+	long STDMETHODCALLTYPE GetHeight()
+	{
+		return mat.cols;
+	}
+	long STDMETHODCALLTYPE GetRowBytes()
+	{
+		return mat.step;
+	}
+	BMDPixelFormat STDMETHODCALLTYPE GetPixelFormat()
+	{
+		return bmdFormat8BitBGRA;
+	}
+	BMDFrameFlags STDMETHODCALLTYPE GetFlags()
+	{
+		return 0;
+	}
+	HRESULT STDMETHODCALLTYPE GetBytes(void** buffer)
+	{
+		*buffer = mat.data;
+		return S_OK;
+	}
+
+	HRESULT STDMETHODCALLTYPE GetTimecode(BMDTimecodeFormat format,
+		IDeckLinkTimecode** timecode)
+	{
+		*timecode = nullptr; return S_OK;
+	}
+	HRESULT STDMETHODCALLTYPE GetAncillaryData(IDeckLinkVideoFrameAncillary** ancillary)
+	{
+		*ancillary = nullptr; return S_OK;
+	}
+
+	//
+	// IDeckLinkVideoFrame
+	//
+
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID* ppv)
+	{
+		return E_NOINTERFACE;
+	}
+
+	ULONG STDMETHODCALLTYPE AddRef()
+	{
+		mat.addref(); return MAT_REFCOUNT(mat);
+	}
+	ULONG STDMETHODCALLTYPE Release()
+	{
+		mat.release();
+		if (MAT_REFCOUNT(mat) == 0) delete this;
+		return MAT_REFCOUNT(mat);
+	}
+};
 
 INT32_SIGNED AtomicIncrement(volatile INT32_SIGNED* value)
 {
@@ -318,8 +393,18 @@ public:
 			return S_OK;
 		}
 
-
 		printf("[%llu.%06llu] Device #%u: Frame %02u:%02u:%02u:%03u arrived\n", hwTime / kMicroSecondsTimeScale, hwTime % kMicroSecondsTimeScale, m_index, hours, minutes, seconds, frames);
+		
+
+		void* data;
+		if (FAILED(videoFrame->GetBytes(&data)))
+			return false;
+		//cv::Mat mat = cv::Mat(videoFrame->GetHeight(), videoFrame->GetWidth(), CV_8UC2);//, data, videoFrame->GetRowBytes());
+		Mat mat(20, 20, CV_8UC3, Scalar(0, 0, 0));
+		//cv::cvtColor(mat, mat, 107);
+		cv::imshow("Display window", mat);
+		//this->frame = mat;
+		
 
 		return S_OK;
 	}
@@ -354,6 +439,8 @@ public:
 			m_deckLinkNotification->Release();
 	}
 
+
+	cv::Mat frame;
 private:
 	unsigned										m_index;
 	IDeckLink* m_deckLink;
@@ -365,6 +452,7 @@ private:
 	InputCallback* m_inputCallback;
 	std::mutex										m_mutex;
 	std::condition_variable							m_signalCondition;
+	
 };
 
 HRESULT InputCallback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents notificationEvents, IDeckLinkDisplayMode* newDisplayMode, BMDDetectedVideoInputFormatFlags detectedSignalFlags)
@@ -374,7 +462,7 @@ HRESULT InputCallback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents 
 
 HRESULT InputCallback::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoFrame, IDeckLinkAudioInputPacket* audioPacket)
 {
-	if (!videoFrame || (videoFrame->GetFlags() & bmdFrameHasNoInputSource))
+	if (!videoFrame) // || (videoFrame->GetFlags() & bmdFrameHasNoInputSource))
 	{
 		printf("No valid frame\n");
 		return S_OK;
@@ -416,8 +504,91 @@ static BOOL supportsSynchronizedCapture(IDeckLink* deckLink)
 
 int main()
 {
-	IDeckLinkIterator* deckLinkIterator = NULL; 
-	CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&deckLinkIterator);
+	IDeckLinkIterator* deckLinkIterator = NULL;
 	IDeckLink* deckLink;
+	HRESULT result;
+	result = CoInitialize(NULL);
 
+	result = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&deckLinkIterator);
+
+
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Error - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Iterator created" << endl;
+	}
+	
+	result = deckLinkIterator->Next(&deckLink);
+	result = deckLinkIterator->Next(&deckLink);
+	result = deckLinkIterator->Next(&deckLink);
+	result = deckLinkIterator->Next(&deckLink);
+	result = deckLinkIterator->Next(&deckLink);
+
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+
+	BSTR temp;
+	result = deckLink->GetDisplayName(&temp);
+
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		// Your wchar_t*
+		wstring ws(temp);
+		// your new String
+		string str(ws.begin(), ws.end());
+		// Show String
+		cout << "Found Device " << str << endl;
+	}
+
+	DeckLinkDevice one;
+	//deckLink->Release();
+	result = one.setup(deckLink, 0);
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+	result = one.prepareForCapture();
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+	result = one.startCapture();
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+	//namedWindow("Display window", WINDOW_AUTOSIZE);
+	//while (true) {
+
+	//	cv::imshow("Display window", one.frame);
+	//	if (cv::waitKey(10) >= 0)
+	//		break;
+
+	//}
+	getchar();
 }
