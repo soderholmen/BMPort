@@ -399,10 +399,11 @@ public:
 		void* data;
 		if (FAILED(videoFrame->GetBytes(&data)))
 			return false;
-		//cv::Mat mat = cv::Mat(videoFrame->GetHeight(), videoFrame->GetWidth(), CV_8UC2);//, data, videoFrame->GetRowBytes());
-		Mat mat(20, 20, CV_8UC3, Scalar(0, 0, 0));
-		//cv::cvtColor(mat, mat, 107);
+		cv::Mat mat = cv::Mat(videoFrame->GetHeight(), videoFrame->GetWidth(), CV_8UC2, data, videoFrame->GetRowBytes());
+		cv::cvtColor(mat, mat, 108);
 		cv::imshow("Display window", mat);
+		if (cv::waitKey(1))
+
 		//this->frame = mat;
 		
 
