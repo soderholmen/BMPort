@@ -21,6 +21,9 @@
     <ClCompile Include="DeckLinkAPI_i.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="FrameHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DeckLinkAPI_h.h">

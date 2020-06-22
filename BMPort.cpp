@@ -11,6 +11,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include "FrameHandler.cpp"
 
 using namespace cv;
 using namespace std;
@@ -401,13 +402,17 @@ public:
 			return false;
 		cv::Mat mat = cv::Mat(videoFrame->GetHeight(), videoFrame->GetWidth(), CV_8UC2, data, videoFrame->GetRowBytes());
 		cv::cvtColor(mat, mat, 108);
-		cv::imshow("Display window", mat);
-		if (cv::waitKey(1))
+		/*cv::imshow("Display window", mat);
+		if (cv::waitKey(1))*/
 
-		//this->frame = mat;
+		this->frame = mat;
 		
 
 		return S_OK;
+	}
+
+	cv::Mat* getFrame() {
+		return &this->frame;
 	}
 
 	~DeckLinkDevice()
@@ -453,7 +458,7 @@ private:
 	InputCallback* m_inputCallback;
 	std::mutex										m_mutex;
 	std::condition_variable							m_signalCondition;
-	
+	FrameHandler fh;
 };
 
 HRESULT InputCallback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents notificationEvents, IDeckLinkDisplayMode* newDisplayMode, BMDDetectedVideoInputFormatFlags detectedSignalFlags)
@@ -583,13 +588,14 @@ int main()
 	{
 		cout << "Found Device" << endl;
 	}
-	//namedWindow("Display window", WINDOW_AUTOSIZE);
-	//while (true) {
+	namedWindow("Display window", WINDOW_AUTOSIZE);
 
-	//	cv::imshow("Display window", one.frame);
-	//	if (cv::waitKey(10) >= 0)
-	//		break;
-
-	//}
+	while (true) {
+		if (one.getFrame()->rows != 0 ) {
+			cv::imshow("Display window", *one.getFrame());
+			if (cv::waitKey(10) >= 0)
+				break;
+		}
+	}
 	getchar();
 }

@@ -178,6 +178,7 @@
       <AdditionalUsingDirectories Condition="'$(Configuration)|$(Platform)'=='OpenCV_DEBUG|x64'">$(OPENCV_DIR)\lib</AdditionalUsingDirectories>
     </ClCompile>
     <ClCompile Include="DeckLinkAPI_i.c" />
+    <ClCompile Include="FrameHandler.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DeckLinkAPI_h.h" />
