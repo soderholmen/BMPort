@@ -1,48 +1,35 @@
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
-#include "opencv2/core/core_c.h"
-#include <iostream>
-#include <objbase.h>
+#include "FrameHandler.cpp"  
 #include "DeckLinkAPI_h.h"
-#include <array>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <atomic>
-#include "FrameHandler.cpp"
-
-using namespace cv;
+ 
 using namespace std;
 
 #define INT32_UNSIGNED unsigned int
 #define INT32_SIGNED signed int
-#define INT64_SIGNED LONGLONG
+#define INT64_SIGNED LONGLONG 
 
 // Video mode parameters
 const BMDDisplayMode      kDisplayMode = bmdModeHD1080p30;
 const BMDVideoInputFlags  kInputFlag = bmdVideoInputFlagDefault;
-const BMDPixelFormat      kPixelFormat = bmdFormat8BitYUV;
+const BMDPixelFormat      kPixelFormat = bmdFormat8BitYUV; 
 
 // Frame parameters
 const INT32_UNSIGNED kFrameDuration = 1000;
 const INT32_UNSIGNED kTimeScale = 30000;
 const INT32_UNSIGNED kSynchronizedCaptureGroup = 2;
 
-static const BMDTimeScale kMicroSecondsTimeScale = 1000000;
+static const BMDTimeScale kMicroSecondsTimeScale = 1000000;  
 
-class DeckLinkDevice;
+class DeckLinkDevice; 
 
 #define MAT_REFCOUNT(mat) \
  (mat.u ? (mat.u->refcount) : 0)
-
-class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame
+ 
+class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame  
 {
-public:
+public: 
 	cv::Mat mat;
-
-	CvMatDeckLinkVideoFrame(int row, int cols)
+	   
+	CvMatDeckLinkVideoFrame(int row, int cols) 
 		: mat(row, cols, CV_8UC4)
 	{}
 
@@ -90,7 +77,7 @@ public:
 	// IDeckLinkVideoFrame
 	//
 
-	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID* ppv)
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID* ppv) 
 	{
 		return E_NOINTERFACE;
 	}
@@ -143,7 +130,7 @@ public:
 		return ++m_refCount;
 	}
 
-	ULONG STDMETHODCALLTYPE Release() override
+	ULONG STDMETHODCALLTYPE Release() override  
 	{
 		INT32_UNSIGNED newRefValue = --m_refCount;
 
@@ -205,7 +192,9 @@ public:
 		m_deckLinkNotification(nullptr),
 		m_notificationCallback(nullptr),
 		m_deckLinkInput(nullptr),
-		m_inputCallback(nullptr)
+		m_inputCallback(nullptr),
+		newFrame(false),
+		fh(nullptr)
 	{
 	}
 
@@ -283,6 +272,13 @@ public:
 		if (result != S_OK)
 		{
 			fprintf(stderr, "Could not set input callback - result = %08x\n", result);
+			goto bail;
+		}
+
+		fh = new FrameHandler(&m_mutex, &frameCondition, &newFrame);
+		if (!fh)
+		{
+			fprintf(stderr, "Invalid frame handler");
 			goto bail;
 		}
 
@@ -392,33 +388,26 @@ public:
 		{
 			fprintf(stderr, "Could not get hardwar reference time from frame - result = %08x\n", result);
 			return S_OK;
-		}
-
+		} 
+		 
 		printf("[%llu.%06llu] Device #%u: Frame %02u:%02u:%02u:%03u arrived\n", hwTime / kMicroSecondsTimeScale, hwTime % kMicroSecondsTimeScale, m_index, hours, minutes, seconds, frames);
 		
-
+		std::unique_lock<std::mutex> guard(m_mutex);
 		void* data;
-		if (FAILED(videoFrame->GetBytes(&data)))
+		if (FAILED(videoFrame->GetBytes(&data)) || *(int*)data == 276828288)
 			return false;
-		cv::Mat mat = cv::Mat(videoFrame->GetHeight(), videoFrame->GetWidth(), CV_8UC2, data, videoFrame->GetRowBytes());
-		cv::cvtColor(mat, mat, 108);
-		/*cv::imshow("Display window", mat);
-		if (cv::waitKey(1))*/
 
-		this->frame = mat;
-		
-
-		return S_OK;
-	}
-
-	cv::Mat* getFrame() {
-		return &this->frame;
+		//Frame buffer to frame handler
+		fh->accFrame(data, videoFrame->GetHeight(), videoFrame->GetWidth(), videoFrame->GetRowBytes());
+		newFrame = true; 
+		frameCondition.notify_all();
+		return S_OK; 
 	}
 
 	~DeckLinkDevice()
 	{
 		if (m_inputCallback)
-		{
+		{ 
 			m_deckLinkInput->SetCallback(nullptr);
 			m_inputCallback->Release();
 		}
@@ -443,10 +432,14 @@ public:
 
 		if (m_deckLinkNotification)
 			m_deckLinkNotification->Release();
+		if (fh)
+			delete(fh);
 	}
 
+	void calFrame() { 
+		fh->calFrame();
+	}
 
-	cv::Mat frame;
 private:
 	unsigned										m_index;
 	IDeckLink* m_deckLink;
@@ -458,7 +451,9 @@ private:
 	InputCallback* m_inputCallback;
 	std::mutex										m_mutex;
 	std::condition_variable							m_signalCondition;
-	FrameHandler fh;
+	std::condition_variable							frameCondition;
+	bool											newFrame;
+	FrameHandler* fh;
 };
 
 HRESULT InputCallback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents notificationEvents, IDeckLinkDisplayMode* newDisplayMode, BMDDetectedVideoInputFormatFlags detectedSignalFlags)
@@ -481,7 +476,7 @@ HRESULT NotificationCallback::Notify(BMDNotifications topic, uint64_t param1, ui
 {
 	if (topic != bmdStatusChanged)
 		return S_OK;
-
+	 
 	if ((BMDDeckLinkStatusID)param1 != bmdDeckLinkStatusDetectedVideoInputMode)
 		return S_OK;
 
@@ -500,21 +495,21 @@ static BOOL supportsSynchronizedCapture(IDeckLink* deckLink)
 
 	BOOL supported = false;
 	result = attributes->GetFlag(BMDDeckLinkSupportsSynchronizeToCaptureGroup, &supported);
-	if (result != S_OK)
+	if (result != S_OK) 
 		supported = false;
 
 	attributes->Release();
 
 	return supported;
-}
+} 
 
-int main()
+int main() 
 {
 	IDeckLinkIterator* deckLinkIterator = NULL;
 	IDeckLink* deckLink;
 	HRESULT result;
 	result = CoInitialize(NULL);
-
+	 
 	result = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&deckLinkIterator);
 
 
@@ -549,7 +544,7 @@ int main()
 	{
 		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
 	}
-	else
+	else 
 	{
 		// Your wchar_t*
 		wstring ws(temp);
@@ -574,9 +569,9 @@ int main()
 	if (result != S_OK)
 	{
 		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}
-	else
-	{
+	}   
+	else 
+	{ 
 		cout << "Found Device" << endl;
 	}
 	result = one.startCapture();
@@ -588,14 +583,9 @@ int main()
 	{
 		cout << "Found Device" << endl;
 	}
-	namedWindow("Display window", WINDOW_AUTOSIZE);
 
 	while (true) {
-		if (one.getFrame()->rows != 0 ) {
-			cv::imshow("Display window", *one.getFrame());
-			if (cv::waitKey(10) >= 0)
-				break;
-		}
+		one.calFrame();
 	}
-	getchar();
+
 }
