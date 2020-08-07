@@ -31,7 +31,7 @@
 
 
 #define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "50001"
+#define DEFAULT_PORT "50003"
 #define DEFAULT_ADDR "127.0.0.1"
 
 using namespace std;

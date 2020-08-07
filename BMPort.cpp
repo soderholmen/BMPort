@@ -25,7 +25,7 @@ class DeckLinkDevice;
  (mat.u ? (mat.u->refcount) : 0)
  
 class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame  
-{
+{ 
 public: 
 	cv::Mat mat;
 	   
@@ -532,7 +532,7 @@ int main()
 	{
 		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
 	}
-	else
+	else 
 	{
 		cout << "Found Device" << endl;
 	}

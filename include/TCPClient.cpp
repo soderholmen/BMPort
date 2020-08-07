@@ -64,7 +64,7 @@ bool TCPClient::Send(const char* data)
 {
     iResult = send(ConnectSocket, data, (int)strlen(data), 0);
     if (iResult == SOCKET_ERROR) {
-        ready = false;
+        ready = false; 
         printf("send failed with error: %d\n", WSAGetLastError());
         closesocket(ConnectSocket);
         WSACleanup();
@@ -78,7 +78,6 @@ bool TCPClient::isReady() { return ready; }
 void TCPClient::receive()
 {
     do {
-
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         if (iResult > 0)
             printf("Bytes received: %d\n", iResult);
@@ -87,7 +86,7 @@ void TCPClient::receive()
         else
             printf("recv failed with error: %d\n", WSAGetLastError());
 
-    } while (iResult > 0);
+    } while (iResult > 4);
 }
 
 bool TCPClient::exit()
