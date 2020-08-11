@@ -59,7 +59,3 @@ class TCPClient
 };
 
 #endif
-
-
-//{"data" : [{"id":0, "x" : 670, "y" : 102}] { END }
-//{"data" : [{"id":1, "x" : 100, "y" : 100}] , "kill" : [{"id":1}] } {END}

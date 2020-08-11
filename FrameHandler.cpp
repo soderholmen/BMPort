@@ -1,5 +1,7 @@
 #include "include/TCPClient.h"
 #include "yolo_v2_class.hpp"
+#include <string>
+#include<mutex>
 
 using namespace cv;
 using namespace std;
@@ -16,29 +18,43 @@ private:
 	std::mutex*	mutex;
 	std::condition_variable*	signalCondition;
 	bool* newFrame;
-	TCPClient tcp;
+	//TCPClient tcp;
 	Detector yolo;
 	CascadeClassifier cascade;
+	vector<vector<bbox_t>>* detections;
+	int camNum;
+	std::mutex* tcpLock;
+	int* tcpCount;
+	bool* sending;
+	condition_variable* tcpCV;
 
 
 public:
 
-	FrameHandler(std::mutex* m, std::condition_variable* cv, bool* newFrame) :
-		mutex(m),
-		signalCondition(cv),
-		newFrame(newFrame),
+	FrameHandler(int cN, vector<vector<bbox_t>>* d, std::mutex* tL, int* tC, bool* s, condition_variable* tCV) :
 		currentFrame(nullptr),
 		height(0),
 		width(0),
 		rowBytes(0),
+		camNum(cN),
+		detections(d),
+		tcpLock(tL),
+		tcpCount(tC),
+		sending(s),
+		tcpCV(tCV),
 		yolo("C:/Users/darklake/repos/darknet/cfg/yolov3.cfg", "C:/Users/darklake/source/repos/weights/yolov3.weights", 1)
 	{
-		namedWindow("window", WINDOW_AUTOSIZE);
+		namedWindow(to_string(camNum), WINDOW_AUTOSIZE);
 		String face = "C:/Users/darklake/source/repos/BMPort/face.xml";
 		cascade.load(face);
-		tcp.setup();
-		while (!tcp.isReady()) {}
-		//tcp.setup(HOST, PORT);
+		//tcp.setup();
+		//while (!tcp.isReady()) {}
+	}
+
+	void setup(std::mutex* m, std::condition_variable* cv, bool* newF) {
+		mutex = m;
+		signalCondition = cv;
+		newFrame = newF;
 	}
 
 	void accFrame(void* fb, int h, int w, int rowB) 
@@ -60,38 +76,23 @@ public:
 		if (mat.rows == 0)
 			return false;
 		cv::cvtColor(mat, mat, 108);
-		//image_t img;
-		//img.h = height;
-		//img.w = width;
-		//img.c = 3;
-		//img.data = (float*)currentFrame;
-		//std::vector<bbox_t> res = yolo.detect(mat);
-		//string send = "{\"camera\" : \"3\",";
-		//send += "\"data\" : [";
-		//for (size_t i = 0; i < res.size(); i++)
-		//{
-		//	Scalar color = Scalar(255, 0, 0);
-		//	
-		//	rectangle(mat, Point(res[i].x, res[i].y), Point(res[i].x + res[i].w, res[i].y + res[i].h), color);
-		//	int newX =  ((100 * (res[i].x + (res[i].w / 2)) / 1920));
-		//	int newY =  ((100 * (res[i].y + (res[i].h / 2)) / 1080));
-		//	cout << "x " << res[i].x << endl;
-		//	cout << "w " << res[i].w << endl;
-		//	cout << res[i].x + (res[i].w / 2) << endl;
-	
 
-		//	send += "{\"id\":" + to_string(res[i].obj_id) + ", \"x\":" + to_string(newY) + ", \"y\":" + to_string(newX) + "}";
+		//detectAndDraw3(mat, cascade, 1); 
+		std::vector<bbox_t> res = yolo.detect(mat);
+		//if (!(*sending) or (*tcpCount == 0)) return true;
+		std::unique_lock<std::mutex> lk(*tcpLock);
+		tcpCV->wait(lk, [s = *sending] {return !s; });
+		for (int i = 0; i < res.size(); i++) {
+			(*detections)[camNum].push_back(res[i]);
+		}
+		//draw(mat, res);
+		//copy(res.begin(), res.end(), (*detections)[camNum].begin());
+		//if (*tcpCount > 0) (*tcpCount)--;
+		//tcpCV->notify_all();
+		//lk.unlock();
+		imshow(to_string(camNum), mat);
+		if (cv::waitKey(1));
 
-		//}
-		//send += "], \"kill\" : []} {END}";
-		//sendTCPData(send);
-		////cout << res.size() << endl;
-		//imshow("window", mat);
-		//if (cv::waitKey(1));
-		//	return false; 
-		
-
-		detectAndDraw(mat, cascade, 1); 
 
 		return true;
 	}
@@ -105,12 +106,24 @@ public:
 		//replace(s.begin(), s.end(), 'q', '"');
 		/*tcp.setup();
 		while (!tcp.isReady()) {}*/
-		tcp.Send(s.c_str());
-		tcp.receive();
-		cout << "after" << endl;
+		//tcp.Send(s.c_str());
+		//tcp.receive();
+		//cout << "after" << endl;
 		//tcp.exit();
 
 	}
+	void draw(Mat& img, std::vector<bbox_t> res) {
+		for (size_t i = 0; i < res.size(); i++)
+		{
+			Scalar color = Scalar(255, 0, 0);
+			rectangle(img, Point(res[i].x, res[i].y), Point(res[i].x + res[i].w, res[i].y + res[i].h), color);
+		}
+
+		imshow(to_string(camNum), img);
+		if (cv::waitKey(1));
+			return; 
+	}
+
 
 	void detectAndDraw2(Mat& img, CascadeClassifier& cascade, double scale) {
 	
@@ -145,8 +158,8 @@ public:
 		}
 		send += "]} {END}";
 		cout << "Sending:    " << send << endl;
-		sendTCPData(send);
-		imshow("face", mask1);
+		//sendTCPData(send);
+		imshow(to_string(camNum), img);
 		if (cv::waitKey(1))
 			return;
 	}
@@ -173,8 +186,8 @@ public:
 		}
 		send += "]} {END}";
 		cout << "Sending:    " << send << endl;
-		sendTCPData(send);
-		imshow("face", img);
+		//sendTCPData(send);
+		imshow(to_string(camNum), img);
 		if (cv::waitKey(1))
 			return;
 	}

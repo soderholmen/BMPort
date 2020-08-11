@@ -1,5 +1,14 @@
 #include "FrameHandler.cpp"  
 #include "DeckLinkAPI_h.h"
+#include <thread>
+#ifdef _WIN32
+#include <Windows.h>
+#else
+#include <unistd.h>
+#endif
+#include <iostream>
+#include <cstdlib>
+#include "include/TCPClient.h"
  
 using namespace std;
 
@@ -11,6 +20,7 @@ using namespace std;
 const BMDDisplayMode      kDisplayMode = bmdModeHD1080p30;
 const BMDVideoInputFlags  kInputFlag = bmdVideoInputFlagDefault;
 const BMDPixelFormat      kPixelFormat = bmdFormat8BitYUV; 
+
 
 // Frame parameters
 const INT32_UNSIGNED kFrameDuration = 1000;
@@ -24,75 +34,75 @@ class DeckLinkDevice;
 #define MAT_REFCOUNT(mat) \
  (mat.u ? (mat.u->refcount) : 0)
  
-class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame  
-{ 
-public: 
-	cv::Mat mat;
-	   
-	CvMatDeckLinkVideoFrame(int row, int cols) 
-		: mat(row, cols, CV_8UC4)
-	{}
-
-	//
-	// IDeckLinkVideoFrame
-	//
-
-	long STDMETHODCALLTYPE GetWidth()
-	{
-		return mat.rows;
-	}
-	long STDMETHODCALLTYPE GetHeight()
-	{
-		return mat.cols;
-	}
-	long STDMETHODCALLTYPE GetRowBytes()
-	{
-		return mat.step;
-	}
-	BMDPixelFormat STDMETHODCALLTYPE GetPixelFormat()
-	{
-		return bmdFormat8BitBGRA;
-	}
-	BMDFrameFlags STDMETHODCALLTYPE GetFlags()
-	{
-		return 0;
-	}
-	HRESULT STDMETHODCALLTYPE GetBytes(void** buffer)
-	{
-		*buffer = mat.data;
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE GetTimecode(BMDTimecodeFormat format,
-		IDeckLinkTimecode** timecode)
-	{
-		*timecode = nullptr; return S_OK;
-	}
-	HRESULT STDMETHODCALLTYPE GetAncillaryData(IDeckLinkVideoFrameAncillary** ancillary)
-	{
-		*ancillary = nullptr; return S_OK;
-	}
-
-	//
-	// IDeckLinkVideoFrame
-	//
-
-	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID* ppv) 
-	{
-		return E_NOINTERFACE;
-	}
-
-	ULONG STDMETHODCALLTYPE AddRef()
-	{
-		mat.addref(); return MAT_REFCOUNT(mat);
-	}
-	ULONG STDMETHODCALLTYPE Release()
-	{
-		mat.release();
-		if (MAT_REFCOUNT(mat) == 0) delete this;
-		return MAT_REFCOUNT(mat);
-	}
-};
+//class CvMatDeckLinkVideoFrame : public IDeckLinkVideoFrame  
+//{ 
+//public: 
+//	cv::Mat mat;
+//	   
+//	CvMatDeckLinkVideoFrame(int row, int cols) 
+//		: mat(row, cols, CV_8UC4)
+//	{}
+//
+//	
+//	 IDeckLinkVideoFrame
+//	
+//
+//	long STDMETHODCALLTYPE GetWidth()
+//	{
+//		return mat.rows;
+//	}
+//	long STDMETHODCALLTYPE GetHeight()
+//	{
+//		return mat.cols;
+//	}
+//	long STDMETHODCALLTYPE GetRowBytes()
+//	{
+//		return mat.step;
+//	}
+//	BMDPixelFormat STDMETHODCALLTYPE GetPixelFormat()
+//	{
+//		return bmdFormat8BitBGRA;
+//	}
+//	BMDFrameFlags STDMETHODCALLTYPE GetFlags()
+//	{
+//		return 0;
+//	}
+//	HRESULT STDMETHODCALLTYPE GetBytes(void** buffer)
+//	{
+//		*buffer = mat.data;
+//		return S_OK;
+//	}
+//
+//	HRESULT STDMETHODCALLTYPE GetTimecode(BMDTimecodeFormat format,
+//		IDeckLinkTimecode** timecode)
+//	{
+//		*timecode = nullptr; return S_OK;
+//	}
+//	HRESULT STDMETHODCALLTYPE GetAncillaryData(IDeckLinkVideoFrameAncillary** ancillary)
+//	{
+//		*ancillary = nullptr; return S_OK;
+//	}
+//
+//	
+//	 IDeckLinkVideoFrame
+//	
+//
+//	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID* ppv) 
+//	{
+//		return E_NOINTERFACE;
+//	}
+//
+//	ULONG STDMETHODCALLTYPE AddRef()
+//	{
+//		mat.addref(); return MAT_REFCOUNT(mat);
+//	}
+//	ULONG STDMETHODCALLTYPE Release()
+//	{
+//		mat.release();
+//		if (MAT_REFCOUNT(mat) == 0) delete this;
+//		return MAT_REFCOUNT(mat);
+//	}
+//};
 
 INT32_SIGNED AtomicIncrement(volatile INT32_SIGNED* value)
 {
@@ -198,7 +208,7 @@ public:
 	{
 	}
 
-	HRESULT setup(IDeckLink* deckLink, unsigned index)
+	HRESULT setup(IDeckLink* deckLink, unsigned index, FrameHandler *frha)
 	{
 		m_deckLink = deckLink;
 		m_index = index;
@@ -274,13 +284,16 @@ public:
 			fprintf(stderr, "Could not set input callback - result = %08x\n", result);
 			goto bail;
 		}
-
-		fh = new FrameHandler(&m_mutex, &frameCondition, &newFrame);
+	
+		fh = frha;//new FrameHandler(&m_mutex, &frameCondition, &newFrame, cameraNumber);
+		fh->setup(&m_mutex, &frameCondition, &newFrame);
 		if (!fh)
 		{
 			fprintf(stderr, "Invalid frame handler");
 			goto bail;
 		}
+
+
 
 	bail:
 		return result;
@@ -454,6 +467,7 @@ private:
 	std::condition_variable							frameCondition;
 	bool											newFrame;
 	FrameHandler* fh;
+	int cameraNumber;
 };
 
 HRESULT InputCallback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents notificationEvents, IDeckLinkDisplayMode* newDisplayMode, BMDDetectedVideoInputFormatFlags detectedSignalFlags)
@@ -503,11 +517,95 @@ static BOOL supportsSynchronizedCapture(IDeckLink* deckLink)
 	return supported;
 } 
 
+void startCamera(IDeckLink* deckLink, vector<vector<bbox_t>> *detections, int camNum, mutex *tcpLock, int *tcpCount, bool *sending, condition_variable* tcpCV) {
+	HRESULT result;
+	BSTR temp;
+	result = deckLink->GetDisplayName(&temp);
+
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		// Your wchar_t*
+		wstring ws(temp);
+		// your new String
+		string str(ws.begin(), ws.end());
+		// Show String
+		cout << "Found Device " << str << endl;
+	}
+
+	FrameHandler fh(camNum, detections, tcpLock, tcpCount, sending, tcpCV);
+
+	DeckLinkDevice cam;
+	//deckLink->Release();
+	result = cam.setup(deckLink, 0, &fh);
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+	result = cam.prepareForCapture();
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+	result = cam.startCapture();
+	if (result != S_OK)
+	{
+		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+	}
+	else
+	{
+		cout << "Found Device" << endl;
+	}
+
+	while (true) {
+		cam.calFrame();
+	}
+
+}
+
+string detToString(vector<vector<bbox_t>> *detections, int numberOfCameras, bool *newData) {
+	string send;			 //= "{\"camera\" :" + to_string(camera) + ",";
+	send += "{\"data\" : [";
+	for (int camera = 0; camera < numberOfCameras; camera++) {
+		while(!(*detections)[camera].empty())
+		{
+			bbox_t det = (*detections)[camera][(*detections)[camera].size() - 1];
+			int newX = (100 - ((100 * (det.x + (det.w / 2)) / 1920)));
+			int newY = (100*camera) + (((100 * (det.y + (det.h / 2)) / 1080)));
+			send += "{\"id\":" + to_string(det.obj_id) + ", \"x\":" + to_string(newY) + ", \"y\":" + to_string(newX) + "}";
+			(*detections)[camera].pop_back();
+			(*newData) = true;
+		}
+	}
+	send += "], \"kill\" : []} {END}";
+	return send;
+
+}
+
 int main() 
 {
 	IDeckLinkIterator* deckLinkIterator = NULL;
 	IDeckLink* deckLink;
 	HRESULT result;
+	condition_variable camerasRunning;
+	mutex tcpLock;
+	int tcpCount;
+	bool sending = false;
+	condition_variable tcpCV;
+	TCPClient tcp;
+	tcp.setup();
+	while (!tcp.isReady()) {}
 	result = CoInitialize(NULL);
 	 
 	result = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&deckLinkIterator);
@@ -521,71 +619,66 @@ int main()
 	{
 		cout << "Iterator created" << endl;
 	}
+	string in;
+	vector<int> temp;
+	while (true) {
+		cout << "Input camera number(0-3, 9 to continue):";
+		cin >> in;
+		if (in == "9") break;
+		temp.push_back(stoi(in));
+	}
+	tcpCount = temp.size();
+
+	std::string delimiter = " ";
+	vector<thread> cameras;
+	size_t pos = 0;
+	std::string token;
+	int numberOfCameras(4);
+	int camNum(0);
+
+	vector<vector<bbox_t>> detections(numberOfCameras);
+	while (camNum < numberOfCameras) {
+		//pos = in.find(delimiter);
+		//if (pos != std::string::npos) break;
+		//token = in.substr(0, pos);
+		//cout << token  << " " << in << endl;
+		result = deckLinkIterator->Next(&deckLink);
+		if (find(temp.begin(), temp.end(), camNum) != temp.end()) {
+			//in.erase(0, pos + delimiter.length());
+			if (result != S_OK)
+			{
+				fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
+			}
+			else
+			{
+				cout << "Starting camera: " << camNum << endl;
+				cameras.push_back(thread(startCamera, deckLink, &detections, camNum, &tcpLock, &tcpCount, &sending, &tcpCV));
+			}					
+		}
+
+		camNum++;
+	}
 	
-	result = deckLinkIterator->Next(&deckLink);
-	result = deckLinkIterator->Next(&deckLink);
-	result = deckLinkIterator->Next(&deckLink);
-	result = deckLinkIterator->Next(&deckLink);
-	result = deckLinkIterator->Next(&deckLink);
-
-	if (result != S_OK)
-	{
-		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}
-	else 
-	{
-		cout << "Found Device" << endl;
-	}
-
-	BSTR temp;
-	result = deckLink->GetDisplayName(&temp);
-
-	if (result != S_OK)
-	{
-		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}
-	else 
-	{
-		// Your wchar_t*
-		wstring ws(temp);
-		// your new String
-		string str(ws.begin(), ws.end());
-		// Show String
-		cout << "Found Device " << str << endl;
-	}
-
-	DeckLinkDevice one;
-	//deckLink->Release();
-	result = one.setup(deckLink, 0);
-	if (result != S_OK)
-	{
-		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}
-	else
-	{
-		cout << "Found Device" << endl;
-	}
-	result = one.prepareForCapture();
-	if (result != S_OK)
-	{
-		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}   
-	else 
-	{ 
-		cout << "Found Device" << endl;
-	}
-	result = one.startCapture();
-	if (result != S_OK)
-	{
-		fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
-	}
-	else
-	{
-		cout << "Found Device" << endl;
-	}
 
 	while (true) {
-		one.calFrame();
+		string out; 
+		bool newData{ false };
+		{
+			std::lock_guard<std::mutex> lk(tcpLock);
+			//tcpCV.wait(lk, [tcpCount] {return tcpCount == 0; });
+			sending = true;
+			//tcpCount = temp.size();
+			out = detToString(&detections, numberOfCameras, &newData);
+			sending = false;
+			tcpCV.notify_all();
+		}
+		if (newData){
+			tcp.Send(out.c_str());
+			tcp.receive();
+		}
+
+
+
 	}
 
 }
