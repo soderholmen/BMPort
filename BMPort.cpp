@@ -9,6 +9,8 @@
 #include <iostream>
 #include <cstdlib>
 #include "include/TCPClient.h"
+#include <set>
+#include <map>
  
 using namespace std;
 
@@ -17,7 +19,7 @@ using namespace std;
 #define INT64_SIGNED LONGLONG 
 
 // Video mode parameters
-const BMDDisplayMode      kDisplayMode = bmdModeHD1080p30;
+const BMDDisplayMode      kDisplayMode = bmdModeHD1080p6000;// bmdMode4K2160p30;//bmdModeHD1080p30; 
 const BMDVideoInputFlags  kInputFlag = bmdVideoInputFlagDefault;
 const BMDPixelFormat      kPixelFormat = bmdFormat8BitYUV; 
 
@@ -403,7 +405,7 @@ public:
 			return S_OK;
 		} 
 		 
-		printf("[%llu.%06llu] Device #%u: Frame %02u:%02u:%02u:%03u arrived\n", hwTime / kMicroSecondsTimeScale, hwTime % kMicroSecondsTimeScale, m_index, hours, minutes, seconds, frames);
+		//printf("[%llu.%06llu] Device #%u: Frame %02u:%02u:%02u:%03u arrived\n", hwTime / kMicroSecondsTimeScale, hwTime % kMicroSecondsTimeScale, m_index, hours, minutes, seconds, frames);
 		
 		std::unique_lock<std::mutex> guard(m_mutex);
 		void* data;
@@ -449,8 +451,8 @@ public:
 			delete(fh);
 	}
 
-	void calFrame() { 
-		fh->calFrame();
+	bool calFrame() { 
+		return fh->calFrame();
 	}
 
 private:
@@ -536,7 +538,7 @@ void startCamera(IDeckLink* deckLink, vector<vector<bbox_t>> *detections, int ca
 		cout << "Found Device " << str << endl;
 	}
 
-	FrameHandler fh(camNum, detections, tcpLock, tcpCount, sending, tcpCV);
+	FrameHandler fh(camNum, detections, tcpLock, sending, tcpCV);
 
 	DeckLinkDevice cam;
 	//deckLink->Release();
@@ -569,27 +571,55 @@ void startCamera(IDeckLink* deckLink, vector<vector<bbox_t>> *detections, int ca
 	}
 
 	while (true) {
-		cam.calFrame();
+		if (!cam.calFrame())
+			fprintf(stderr, "No frame\n", result);
 	}
 
 }
 
-string detToString(vector<vector<bbox_t>> *detections, int numberOfCameras, bool *newData) {
-	string send;			 //= "{\"camera\" :" + to_string(camera) + ",";
-	send += "{\"data\" : [";
+string detToString(vector<vector<bbox_t>> *detections, map<string, int> *all_det, int numberOfCameras, bool *newData, pair<int, int> res) {
+	string data = "{\"data\" : [";
+	string kill = "\"kill\" : [";
+	map<string, int> temp_map;
+	bool first{ true };
 	for (int camera = 0; camera < numberOfCameras; camera++) {
 		while(!(*detections)[camera].empty())
 		{
+			if (!first) data += ", ";
+			first = false;
 			bbox_t det = (*detections)[camera][(*detections)[camera].size() - 1];
-			int newX = (100 - ((100 * (det.x + (det.w / 2)) / 1920)));
-			int newY = (100*camera) + (((100 * (det.y + (det.h / 2)) / 1080)));
-			send += "{\"id\":" + to_string(det.obj_id) + ", \"x\":" + to_string(newY) + ", \"y\":" + to_string(newX) + "}";
+			string object_id{ to_string(camera+1) + to_string(det.obj_id) };
+			
+			temp_map.insert(pair<string, int>(object_id, 0));
+			int newX = (100 - ((100 * (det.x + (det.w / 2)) / res.first)));
+			int newY = (100*(camera-4)) + (((100 * (det.y + (det.h / 2)) / res.second)));
+			data += "{\"id\":" + (object_id) + ", \"x\":" + to_string(newY) + ", \"y\":" + to_string(newX) + "}";
 			(*detections)[camera].pop_back();
 			(*newData) = true;
 		}
 	}
-	send += "], \"kill\" : []} {END}";
-	return send;
+	data += "], ";
+	first = true;
+	for (auto det : *all_det) {
+	
+		if (temp_map.find(det.first) == temp_map.end()) {
+
+			if (det.second > 30000) {
+				if (!first) kill += ", ";
+				first = false;
+				kill += det.first;	
+				(*newData) = true;
+			}
+			else
+			{
+				det.second++;
+				temp_map.insert(det);
+			}
+				
+		}
+	}
+	all_det->swap(temp_map);
+	return data + kill + "]} {END}";
 
 }
 
@@ -606,6 +636,18 @@ int main()
 	TCPClient tcp;
 	tcp.setup();
 	while (!tcp.isReady()) {}
+
+
+	pair<int, int> res(0, 0);
+	if (kDisplayMode == bmdMode4K2160p30) {
+		res.first = 3840;
+		res.second = 2160;
+	}
+	else if (kDisplayMode == bmdModeHD1080p30 || kDisplayMode == bmdModeHD1080p6000) {
+		res.first = 1920;
+		res.second = 1080;
+	}
+
 	result = CoInitialize(NULL);
 	 
 	result = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&deckLinkIterator);
@@ -622,7 +664,7 @@ int main()
 	string in;
 	vector<int> temp;
 	while (true) {
-		cout << "Input camera number(0-3, 9 to continue):";
+		cout << "Input camera number(0-7, 9 to continue):";
 		cin >> in;
 		if (in == "9") break;
 		temp.push_back(stoi(in));
@@ -633,18 +675,14 @@ int main()
 	vector<thread> cameras;
 	size_t pos = 0;
 	std::string token;
-	int numberOfCameras(4);
+	int numberOfCameras(8);
 	int camNum(0);
 
 	vector<vector<bbox_t>> detections(numberOfCameras);
+	map<string, int> all_detections;
 	while (camNum < numberOfCameras) {
-		//pos = in.find(delimiter);
-		//if (pos != std::string::npos) break;
-		//token = in.substr(0, pos);
-		//cout << token  << " " << in << endl;
 		result = deckLinkIterator->Next(&deckLink);
 		if (find(temp.begin(), temp.end(), camNum) != temp.end()) {
-			//in.erase(0, pos + delimiter.length());
 			if (result != S_OK)
 			{
 				fprintf(stderr, "Could not find DeckLink device - result = %08x\n", result);
@@ -665,10 +703,8 @@ int main()
 		bool newData{ false };
 		{
 			std::lock_guard<std::mutex> lk(tcpLock);
-			//tcpCV.wait(lk, [tcpCount] {return tcpCount == 0; });
 			sending = true;
-			//tcpCount = temp.size();
-			out = detToString(&detections, numberOfCameras, &newData);
+			out = detToString(&detections, &all_detections, numberOfCameras, &newData, res);
 			sending = false;
 			tcpCV.notify_all();
 		}
